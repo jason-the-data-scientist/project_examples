@@ -1,0 +1,609 @@
+#Read in the data -----
+
+load(file="class_data.RData")
+
+
+#corrplot: the library to compute correlation matrix.
+library(corrplot)
+library(caret)
+set.seed(54)
+
+datMy <- x
+#scale all the features (from feature 2 because feature 1 is the predictor output)
+datMy.scale<- scale(datMy[1:ncol(datMy)],center=TRUE,scale=TRUE);
+
+#compute the correlation matrix
+corMatMy <- cor(datMy.scale)
+#visualize the matrix, clustering features by correlation index.
+pdf("org_corrplot.pdf", height=45, width=45)
+corrplot(corMatMy, order = "hclust")
+dev.off()
+
+## Quadratic Discriminant Analysis w/Cross Validation----
+library(MASS)
+qda.data <- datMy ### Original Data minus highly correlated variables
+fold.count <- 4 ### Number of outer folds
+total.obs <- nrow(qda.data) ### Total number of observations to create folds
+folds <- sample(1:fold.count, total.obs, replace=TRUE) ### Folds
+fold.accuracy <- rep(0, fold.count) ### Variable to store accuracy of eachfold
+yhat.label <- 0
+y.label <- 0
+yhat.probs <- 0
+### k-fold cross validation
+for (k in 1:fold.count){
+  
+  ### Splitting data into training and testing sets
+  train <- qda.data[folds!=k,]
+  test <- qda.data[folds==k,]
+  trainy <- y[folds!=k]
+  testy <- y[folds==k]
+  
+  ### Determining highly influential features
+  X <- data.frame(train)
+  Y <- data.frame(trainy)
+  correl <- cor(X, Y)
+  correl <- order(-correl)
+  
+  ### Selecting important features
+  qda.condata <- train[,correl[1:30]]
+  
+  ### Fitting QDA model on reduced dimensional data
+  qda.fit <- qda(trainy~., data=qda.condata)
+  
+  ### Testing the above model on test set
+  qda.pred <- predict(qda.fit, test)
+  yhat.test <- qda.pred$class
+  
+  ### For ROC curve
+  yhat.probs <- c(yhat.probs, qda.pred$posterior[,2])
+  yhat.label <- c(yhat.label, yhat.test)
+  y.label <- c(y.label, testy)
+  
+  ### k-th fold model accuracy
+  fold.accuracy[k] <- mean(yhat.test==testy)
+}
+
+### Calculating CV accuracy of feature selected model
+sum(fold.accuracy)/fold.count
+
+yhat.label <- yhat.label[-c(1)]
+y.label <- y.label[-c(1)]
+yhat.probs <- yhat.probs[-c(1)]
+yhat.label <- yhat.label-1
+mean(yhat.label==y.label)
+
+library(performance)
+library(ROCR)
+pred <- prediction(yhat.probs, y.label)
+roc.qda <- performance(pred,"tpr","fpr")
+
+
+##Random Forest----
+### Random Forest with Nested Cross Validation for feature selection
+### and hyperparameter selection
+library(randomForest)
+
+### Converting response variable into factors as required by RF model
+y.org <- as.factor(y)
+
+### Nested Cross Validation
+### 1) Dataset is separated into 4 outer_folds i.e. testing (1/4) and training (3/4) sets.
+### 2) Training set is further separated into 4 inner_folds i.e. validation (1/4) training (3/4) sets.
+### 3) In inner-loop important features are selected using Variable Importance  table using inner_fold training set.
+### 4) Then selected features are used to fit a RF model on validation set to get CV error.
+### 5) Step 3&4 is repeated for all possible combinations of hyperparameters using grid search method.
+### 6) Then using the best set of features obtained from inner_loop, for given hyperparameters,
+###    RF model is fitted on outer_loop training set, whose performance is estimated using test set.
+### 7) This methodlogy is used to avoid selection bias.
+
+ofold.count <- 4 ### Number of outer folds
+total.obs <- nrow(datMy) ### Total number of observations to create folds
+ofolds <- sample(1:ofold.count, total.obs, replace=TRUE) ### Outer folds
+
+### Grid of feature selection model (mtry+ntree), condensed feature model (mtry+ntree) and feature count. 
+tunegrid <- expand.grid(.mtry.vs=c(140), .mtry=c(20), .VarCount=c(30), .ntree.vs=c(3000), .ntree=c(1000))
+
+### Initialization of variables used in code
+u <- nrow(tunegrid) ### Grid combination count
+CV.accuracy.ifold <- matrix(nrow=u, ncol=ofold.count) ### Variable to store inner fold CV accuracy
+ofold.accuracy <- matrix(nrow=u, ncol=ofold.count) ### Variable to store accuracy of each outer fold
+pred.prob <- 0 ### Variable to store prediction probability for ROC curve generation
+y.label <- 0 ### Variable to store true response data for ROC curve generation
+yhat.label <- 0 ### Variable to store predicted response data for ROC curve generation
+
+### Outer Loop
+for (k in 1:ofold.count){
+  
+  ### Splitting data into training and testing sets
+  train <- datMy[ofolds!=k,]
+  test <- datMy[ofolds==k,]
+  trainy <- y.org[ofolds!=k]
+  testy <- y.org[ofolds==k]
+  
+  n <- nrow(train) ### no. of observations to create inner_folds
+  ifold.count <- 4 ### no. of inner_folds
+  ifolds <- sample(1:ifold.count, n, replace=TRUE) ### Inner folds
+  
+  ### Loop for grid search
+  for (j in 1:u){
+    
+    ### Initialization of variables used in code
+    rfImpVarStr <- 0 ### Variable to store important features
+    ifold.accuracy <- rep(0, ifold.count) ### Accuracy for each inner_fold
+    
+    ### Inner Loop
+    for (i in 1:ifold.count){
+      
+      ### Fitting RF model on inner_loop training set
+      bag.train.vs <- randomForest(trainy[ifolds!=i]~., data=train[ifolds!=i,], mtry=tunegrid[j,1], ntree=tunegrid[j,4], importance=TRUE)
+      
+      ### Generating Variable Importance table
+      VarImpTable <- varImp(bag.train.vs, scale=FALSE)
+      
+      ### Selecting important features
+      VarImpTable[,1] <- rownames(VarImpTable)
+      VarImpTable <- VarImpTable[order(-VarImpTable[,2]),]
+      rfImpVar <- VarImpTable[1:tunegrid[j,3],1]
+      rfImpVarStr <- c(rfImpVarStr, rfImpVar)
+      rf.data <- train[,rfImpVar]
+      
+      ### Fitting model again on inner_loop training set
+      bag.train <- randomForest(trainy[ifolds!=i]~., data=rf.data[ifolds!=i,], mtry=tunegrid[j,2], ntree=tunegrid[j,5])
+      
+      ### Testing the above model on validation set
+      yhat.bag <- predict(bag.train,newdata=rf.data[ifolds==i,])
+      ifold.accuracy[i] <- mean(yhat.bag==trainy[ifolds==i])
+    }
+    ### Calculating CV accuracy of feature selected model
+    CV.accuracy.ifold[j,k] <- sum(ifold.accuracy)/ifold.count
+    
+    ### Combining all the features across inner_CV and removing duplicate entries
+    rfImpVarStr <- rfImpVarStr[-c(1)]
+    rfImpVarcomb <- unique(rfImpVarStr)
+    rf.data.train <- train[,rfImpVarcomb]
+    
+    ### Fitting the RF model, using above set of features, on outer_loop training set
+    bag.test <- randomForest(trainy~., data=rf.data.train, mtry=tunegrid[j,2], ntree=tunegrid[j,4])
+    
+    ### Verifying above model accuracy on outer_loop testing set
+    yhat.bag.test <- predict(bag.test,newdata=test)
+    ofold.accuracy[j,k] <- mean(yhat.bag.test==testy)
+  }
+  ### Storing prediction probabilities, predicted response and true response for ROC Curve generation
+  ofold.pred <- predict(bag.test, test, "prob")
+  pred.prob <- c(pred.prob, ofold.pred[,2])
+  yhat.label <- c(yhat.label,yhat.bag.test)
+  y.label <- c(y.label, testy)
+}
+pred.prob <- pred.prob[-c(1)]
+y.label <- y.label[-c(1)]
+yhat.label <- yhat.label[-c(1)]
+
+pred <- prediction(pred.prob, y.label)
+roc.rf <- performance(pred,"tpr","fpr")
+
+
+##GLM ----
+
+#Create Training and Testing Datasets
+all_data <- cbind(y,x)
+n <- dim(all_data)[1]
+#Take a random sample for training and testing. I also make sure
+#that the y values match up with the training and testing data.
+train.rows <- sample(n, 200)
+all_train  <- all_data[train.rows, ]
+x_train <- all_train[,-1]
+y_train <- all_train[,1]
+all_test <- all_data[-train.rows, ]
+x_test <- all_test[,-1]
+y_test <- all_test[,1]
+
+##Run tests on the data
+#This function runs tests on the data to find which variables 
+#are individually statistically significant when using a simple
+#linear regression and alpha=0.01. This is a form of variable
+#selection.
+j=1
+ImpV= c()
+for(i in 1:length(x_train)){
+  Vx=x_train[i]
+  names(Vx)="X"
+  glm.fit = glm(y_train~X,data=Vx,family=binomial)
+  if(summary(glm.fit)$coefficients[2,4]<0.01){
+    ImpV[j] = i
+    j=j+1
+  }}
+#These are the important variables
+ImpV
+
+#Use only important variables in model.  
+x.red <- x_train[, ImpV]
+
+#We will now proceed with only the important variables.
+
+#Correlation matrix
+corr_matrix <- data.frame(cor(x.red))
+
+#At this point, I have the variables that are most statistically
+#significant but there is multicollinearity. This next section
+#seeks to find which variables are highly correlated
+#and then removes the variable that is less significant
+#to the model out of the two.
+
+#Significant correlation
+library(Hmisc)
+library(corrplot)
+#matrix form of the correlations
+res2 <- rcorr(as.matrix(x.red))
+
+#Code I found to use correlations in a list
+flattenCorrMatrix <- function(cormat, pmat) {
+  ut <- upper.tri(cormat)
+  data.frame(
+    row = rownames(cormat)[row(cormat)[ut]],
+    column = rownames(cormat)[col(cormat)[ut]],
+    cor  =(cormat)[ut],
+    p = pmat[ut]
+  )
+}
+#Get the correlations in a list
+correlations <- flattenCorrMatrix(res2$r, res2$P)
+#order the correlations to see all of them
+ordered_corr <- as.data.frame(correlations)[order(-correlations$cor),]
+#Observe the variables that are most correlated. I used the cut-off
+#point of 0.75 which indicate high correlation. I Stat 641, I 
+#was taught that a correlation of 0.75 is considered high correlation.
+high_corr <- subset(ordered_corr, abs(ordered_corr$cor) >= 0.75)
+
+
+#List of good variables
+name1 <- names(x.red)[!(names(x.red) %in% high_corr$col)]
+name2 <- name1[!name1 %in% high_corr$row]
+name2
+
+#This can now be applied to any lm function like the one below.
+#good_var <- paste("y~ ",paste(name2, collapse="+"),sep = "")
+
+
+#List of highly correlated variables
+name3 <- names(x.red)[(names(x.red) %in% high_corr$col) | (names(x.red) %in% high_corr$row)]
+#Reformat of highly correlated variables.
+#Example of using highly correlated in a lm function.
+#bad_var <- paste("~",paste(name3, collapse="+"),sep = "")
+library(reshape2)
+high_corr_var <- melt(name3, id.vars=names(name3))
+x.corr <- x.red[(names(x.red) %in% high_corr_var$value)]
+
+#Keep the variable that is most significant
+x.clean <- x.red
+for(i in 1:nrow(high_corr)) {
+  #Get the variable name
+  var1 <- paste(high_corr[i,1])
+  #Format to a glm function
+  mod1 <- paste("y_train~",paste(var1, collapse="+"),sep = "")
+  #Fit the model to that variable
+  lm1 <- glm(mod1,data=x.red,family=binomial)
+  #Get the p-value of that variable
+  p1 <- summary(lm1)$coefficients[2,4]
+  
+  #Do the same thing as above but for the variable that it is
+  #correlated with.
+  var2 <- paste(high_corr[i,2])
+  mod2 <- paste("y_train~",paste(var2, collapse="+"),sep = "")
+  lm2 <- glm(mod2,data=x.red,family=binomial)
+  p2 <- summary(lm2)$coefficients[2,4]
+  
+  #Determine which variable is most significant.
+  if(p1 > p2) {
+    char <- var1
+  }
+  else {
+    char <- var2
+  }
+  #Keep the most significant variable
+  x.clean <- x.clean[, !names(x.clean) %in% c(char)]
+}
+
+#Test that the data does not have multicollinearity.
+corr_matrix_clean <- data.frame(cor(x.clean))
+#This confirms that the code worked.
+
+#This removes the unnecessary variables moving forward.
+rm(high_corr, x.corr, name3, name2, name1, high_corr_var, ordered_corr, correlations, flattenCorrMatrix,res2, Vx, lm1, lm2, corr_matrix,corr_matrix_clean)
+
+
+#x.clean now has the highly correlated variables removed. The 
+#data is now ready to use in a glm function.
+
+#SLR without colinearity
+#Run the model on the data with the colinear data removed.
+#This is fitting and testing the data on the training set.
+glm.clean <- lm(y_train ~ ., data = x.clean)
+summary(glm.clean)
+glm.probs=predict(glm.clean,type="response")
+glm.pred=rep(0,nrow(x.clean))
+glm.pred[glm.probs >.5]=1
+table(glm.pred,y_train)
+mean(glm.pred==y_train) #This is the training prediction accuracy.
+
+#This is fitting and testing with the testing data.
+glm.test.probs <- predict(glm.clean, all_test)
+glm.test.pred=rep(0,nrow(all_test))
+glm.test.pred[glm.test.probs >.5]=1
+table(glm.test.pred,y_test)
+mean(glm.test.pred==y_test) #This is the testing prediction accuracy.
+
+pred <- prediction(glm.test.probs, y_test)
+roc.glm <- performance(pred,"tpr","fpr")
+
+
+
+##Ridge Regression----
+
+# the test accuracy is around 60%, 
+#which means the ridge algorithm may not be able to predict the classes at all
+library(glmnet)
+set.seed(100) 
+x = subset(x, select = -c(y) )
+index = sample(1:nrow(x), 0.8*nrow(x)) 
+x$y=y
+train = x[index,] # Create the training data 
+test = x[-index,] # Create the test data
+dim(train)
+dim(test)
+ytrain=train$y
+ytest=test$y
+xtrain=subset(train, select = -c(y) )
+xtest=subset(test, select = -c(y) )
+#glmnet requires matrix form as input
+x=model.matrix(y~.,train)[,-1] # take out the first column which are all 1's for intercept
+
+#scaling dataset
+sctrain=scale(xtrain)
+sctest=scale(xtest)
+
+fit.ridge=glmnet(sctrain,ytrain,alpha=0) # alpha=0 for ridge and alpha=1 for lasso (default alpha=1)
+plot(fit.ridge,xvar="lambda",label=TRUE) # plot ridge solution path
+
+cv.ridge=cv.glmnet(sctrain,ytrain,alpha=0) # use cross validation for choosing the penalty parameter lambda
+plot(cv.ridge) # plot cv.error v.s a sequence of lambda values; the two dashed lines correspond to the best lambda value and the largest value of lambda such that error is within 1 standard error of the best lambda 
+ridge.best.lambda=cv.ridge$lambda.1se # find the best lambda value corresponding to min cv.error
+log(ridge.best.lambda)
+ypreds<-predict(glmnet(sctrain,ytrain,alpha=0,lambda=ridge.best.lambda),newdata=sctest,newx=sctest)
+ypreds=ifelse(ypreds>0.5,'1','0') #Varying the threshold gives maximum accuracy at 0.5 or 0.45
+mean(ypreds==ytest)
+
+#Prediction ROC curve
+ypreds<-predict(glmnet(sctrain,ytrain,alpha=0,lambda=ridge.best.lambda),newdata=sctest,newx=sctest)
+pred <- prediction(ypreds, ytest)
+roc.ridge <- performance(pred,"tpr","fpr")
+
+
+
+##SVM ----
+SVM
+
+#Hyperparameters cost and threshold are considered
+#the validation accuracy of the model around 61 % suggests it could as good as random guess
+
+library(e1071)
+cv.err<-vector(mode='list',length=7)
+count<-0
+for (cost in list(0.2, 0.6, 1, 1.5, 6, 15, 70)) {
+  svmfit=svm(y~.,data=train,kernel="radial", cost=cost)
+  svm.pred=predict(svmfit, test)
+  svm.pred=ifelse(svm.pred>0.5,'1','0')
+  count=count+1
+  cv.err[count]=mean(svm.pred==ytest)
+  print(cv.err)}
+
+
+
+##Lasso with VIF----
+library(car)
+library(plyr)
+
+df1<-train[1:300]
+df1$y<-ytrain
+fit=lm(y~.,data=df1)
+# Calculating VIF for each independent variable
+vars<-vif(fit)
+# Set a VIF threshold. All the variables having higher VIF than threshold
+#are dropped from the model, usually threshold is 5
+threshold=4
+# Sequentially drop the variable with the largest VIF until
+# all variables have VIF less than threshold
+drop=TRUE
+aftervif=data.frame()
+while(drop==TRUE) {
+  vfit=vif(fit)
+  aftervif=rbind.fill(aftervif,as.data.frame(t(vfit)))
+  if(max(vfit)>threshold) { fit=
+    update(fit,as.formula(paste(".","~",".","-",names(which.max(vfit))))) }
+  else { drop=FALSE }}
+# Model after removing correlated Variables
+print(fit)
+# How variables removed sequentially
+t_aftervif= as.data.frame(t(aftervif))
+edit(t_aftervif)
+vars_1<-names(vfit)
+vars_2<-c(vars_1,names(train[301:370]),'y')
+# REPEAT PROCEDURE INCLUDING REMAINING VARIABLES
+fit<-lm(y~.,data=train[vars_2])
+drop=TRUE
+aftervif=data.frame()
+while(drop==TRUE) {
+  vfit=vif(fit)
+  aftervif=rbind.fill(aftervif,as.data.frame(t(vfit)))
+  if(max(vfit)>threshold) { fit=
+    update(fit,as.formula(paste(".","~",".","-",names(which.max(vfit))))) }
+  else { drop=FALSE }}
+print(fit)
+t_aftervif= as.data.frame(t(aftervif))
+edit(t_aftervif)
+vars_3<-names(vfit)
+vars_4<-c(vars_3,names(train[371:420]),'y')
+
+fit<-lm(y~.,data=train[vars_4])
+drop=TRUE
+aftervif=data.frame()
+while(drop==TRUE) {
+  vfit=vif(fit)
+  aftervif=rbind.fill(aftervif,as.data.frame(t(vfit)))
+  if(max(vfit)>threshold) { fit=
+    update(fit,as.formula(paste(".","~",".","-",names(which.max(vfit))))) }
+  else { drop=FALSE }}
+print(fit)
+t_aftervif= as.data.frame(t(aftervif))
+edit(t_aftervif)
+vars_5<-names(vfit)
+vars_6<-c(vars_5,names(train[421:470]),'y')
+
+fit<-lm(y~.,data=train[vars_6])
+drop=TRUE
+aftervif=data.frame()
+while(drop==TRUE) {
+  vfit=vif(fit)
+  aftervif=rbind.fill(aftervif,as.data.frame(t(vfit)))
+  if(max(vfit)>threshold) { fit=
+    update(fit,as.formula(paste(".","~",".","-",names(which.max(vfit))))) }
+  else { drop=FALSE }}
+print(fit)
+t_aftervif= as.data.frame(t(aftervif))
+edit(t_aftervif)
+vars_7<-names(vfit)
+
+vars_8<-c(vars_7,names(train[471:500]),'y')
+fit<-lm(y~.,data=train[vars_8])
+drop=TRUE
+aftervif=data.frame()
+while(drop==TRUE) {
+  vfit=vif(fit)
+  aftervif=rbind.fill(aftervif,as.data.frame(t(vfit)))
+  if(max(vfit)>threshold) { fit=
+    update(fit,as.formula(paste(".","~",".","-",names(which.max(vfit))))) }
+  else { drop=FALSE }}
+print(fit)
+t_aftervif= as.data.frame(t(aftervif))
+edit(t_aftervif)
+vars_9<-names(vfit)
+vars_used<-c(vars_9,'y')
+vars_used <- vars_used[vars_used != "y.1"]
+
+#Logistic Regression----
+fit<-lm(y~.,data=train[vars_used])
+preds<-predict(fit,test[vars_used],type='response')
+ypreds<-ifelse(preds>0.7,'1','0')
+mean(ypreds==ytest)
+
+
+
+
+#        LASSO regression on variables with less multicollinearity
+sctr=scale(xtrain[vars_9])
+sctes=scale(xtest[vars_9])
+
+cv.lasso=cv.glmnet(sctr,ytrain,alpha=0.8) # use cross validation for choosing the penalty parameter lambda
+plot(cv.lasso) # plot cv.error v.s a sequence of lambda values; the two dashed lines correspond to the best lambda value and the largest value of lambda such that error is within 1 standard error of the best lambda 
+lasso.best.lambda=cv.lasso$lambda.1se # find the best lambda value corresponding to min cv.error
+log(lasso.best.lambda)
+ypreds<-predict(glmnet(sctr,ytrain,alpha=0.8,lambda=0.025),newdata=sctes,newx=sctes)
+ypreds=ifelse(ypreds>0.5,'1','0') #Varying the threshold gives maximum accuracy at 0.5 or 0.45
+mean(ypreds==ytest)
+
+#Decrease Dimensionality----
+#corrplot: the library to compute correlation matrix.
+library(corrplot)
+library(caret)
+set.seed(54)
+
+datMy <- x
+#scale all the features (from feature 2 bacause feature 1 is the predictor output)
+datMy.scale<- scale(datMy[1:ncol(datMy)],center=TRUE,scale=TRUE);
+
+#compute the correlation matrix
+corMatMy <- cor(datMy.scale)
+#visualize the matrix, clustering features by correlation index.
+pdf("org_corrplot.pdf", height=45, width=45)
+corrplot(corMatMy, order = "hclust")
+dev.off()
+
+#Apply correlation filter at 0.80
+highlyCor <- findCorrelation(corMatMy, 0.80)
+#then we remove all the variable correlated with more 0.80.
+datMyFiltered.scale <- datMy.scale[,-highlyCor]
+corMatMy <- cor(datMyFiltered.scale)
+pdf("rev_corrplot.pdf", height=45, width=45)
+corrplot(corMatMy, order = "hclust")
+dev.off()
+
+library(MASS)
+library(corrplot)
+library(caret)
+glm.data <- datMy[,-highlyCor]
+indexglm = sample(1:nrow(glm.data), 0.8*nrow(glm.data)) 
+trainglm=glm.data[indexglm,]
+testglm=glm.data[-indexglm,]
+ytrainglm=y[indexglm]
+ytestglm=y[-indexglm]
+correl <- cor(trainglm, ytrainglm)
+correl <- order(-correl)
+glm.condata <- trainglm[,correl[1:30]]
+
+##SVM----
+cv.err<-vector(mode='list',length=7)
+count<-0
+for (cost in list(0.01,0.1,0.2, 0.6, 1, 1.5, 6, 15)) {
+  svmfit=svm(ytrainglm~.,data=glm.condata,kernel="radial", cost=cost)
+  svm.pred=predict(svmfit, testglm[,correl[1:30]])
+  svm.pred=ifelse(svm.pred>0.5,'1','0')
+  count=count+1
+  cv.err[count]=mean(svm.pred==ytestglm)
+  print(cv.err)}
+
+#ROC Curve
+svm.pred=predict(svmfit, testglm[,correl[1:30]])
+pred <- prediction(svm.pred, ytestglm)
+roc.svm <- performance(pred,"tpr","fpr")
+
+
+##ELastic Net----
+glm.condata1 <- trainglm[,correl[1:50]]
+sctrain=scale(glm.condata1)
+sctest=scale(testglm[,correl[1:50]])
+
+fit.ridge=glmnet(sctrain,ytrainglm,alpha=0.6) # alpha=0 for ridge and alpha=1 for lasso (default alpha=1)
+plot(fit.ridge,xvar="lambda",label=TRUE) # plot ridge solution path
+
+cv.ridge=cv.glmnet(sctrain,ytrainglm,alpha=0.6) # use cross validation for choosing the penalty parameter lambda
+plot(cv.ridge) # plot cv.error v.s a sequence of lambda values; the two dashed lines correspond to the best lambda value and the largest value of lambda such that error is within 1 standard error of the best lambda 
+ridge.best.lambda=cv.ridge$lambda.1se # find the best lambda value corresponding to min cv.error
+log(ridge.best.lambda)  #-3.207527
+ypreds<-predict(glmnet(sctrain,ytrainglm,alpha=0.6,lambda=ridge.best.lambda),newdata=sctest,newx=sctest)
+ypreds=ifelse(ypreds>0.45,'1','0') #Varying the threshold gives maximum accuracy at 0.5 or 0.45
+mean(ypreds==ytestglm)
+
+#Roc curve
+ypreds<-predict(glmnet(sctrain,ytrainglm,alpha=0.6,lambda=ridge.best.lambda),newdata=sctest,newx=sctest)
+pred <- prediction(ypreds, ytestglm)
+roc.en <- performance(pred,"tpr","fpr")
+
+
+#ROC Plots----
+library(AUC)
+thick <- 2
+plot(roc.qda, col="Red", main= "ROC Curve", lwd =thick)
+plot(roc.rf, col="Blue", main= "ROC Curve", lwd =thick, add=TRUE)
+plot(roc.glm, col="Green", main= "ROC Curve", lwd =thick, add=TRUE)
+plot(roc.ridge, col="Purple", main= "ROC Curve", lwd =thick, add=TRUE)
+plot(roc.svm, col="Pink", main= "ROC Curve", lwd =thick, add=TRUE)
+plot(roc.en, col="Grey", main= "ROC Curve", lwd =thick, add=TRUE)
+
+abline(a=0, b=1, lwd =thick)
+legend(0.5, 0.4, 
+       legend=c("Ridge: AUC= 0.56","SVM: AUC= 0.61", "QDA: AUC=0.63",
+                "Elastic Net: AUC=0.66", "GLM: AUC=0.74",
+                "Random Forest: AUC=0.81"),
+       col=c("Purple", "pink", "red", "Grey", "green", "blue"), lty=1,cex=0.6)
+
+
