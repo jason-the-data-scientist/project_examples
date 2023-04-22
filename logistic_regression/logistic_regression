@@ -1,0 +1,166 @@
+#Jason Colgrove
+#Stat 330
+#Dr. Grimshaw
+#Midterm 3
+#15 April 2019
+
+#1---
+#Group Members: Jason Colgrove, Austin Croaxall, Mike Sonderegger 
+
+#read in the data----
+stem <- read.csv("http://grimshawville.byu.edu/STEMswitchers.csv", stringsAsFactors = TRUE,
+                 header = TRUE)
+#EDA----
+#2---
+#The response variable: Switcher
+#Explanatory varaibles
+# Qualatative: Gender, Major, PrevCalc
+# Quantative: Teacher, ClassPractice, StandardizedTest
+
+#change the numbers to names that are more meaningful and easy for comparison
+#Do this for all of the categorical variables.
+#Gender, major, calc experience, if they switched
+#Do not do this for switcher, the response variable becasue it needs to be a 1 or 0.
+stem$Gender[stem$Gender == 1] <- "male"
+stem$Gender[stem$Gender == 2] <- "female"
+
+stem$Major[stem$Major == 1] <- "STEM field"
+stem$Major[stem$Major == 2] <- "Engineering"
+stem$Major[stem$Major == 3] <- "Pre-med"
+stem$Major[stem$Major == 4] <- "non-STEM"
+stem$Major[stem$Major == 5] <- "undecided"
+
+stem$PrevCalc[stem$PrevCalc == 1] <- "HS"
+stem$PrevCalc[stem$PrevCalc == 4] <- "College"
+stem$PrevCalc[stem$PrevCalc == 5] <- "None"
+
+#make the strings as factors
+stem$Gender <- as.factor(stem$Gender)
+stem$Major <- as.factor(stem$Major)
+stem$PrevCalc <- as.factor(stem$PrevCalc)
+
+#relevel the factors
+#do not do this for response variable.
+stem$Gender <- relevel(stem$Gender, ref = "male")
+stem$Major <- relevel(stem$Major, ref = "STEM field")
+stem$PrevCalc <- relevel(stem$PrevCalc, "None")
+
+#make the test and train datasets
+#set seed for comparision
+set.seed(18)
+train.ind <- sample(2266, 1800)
+stem.train <- stem[train.ind,]
+stem.test <- stem[-train.ind,]
+
+#confirm that the test and train dataset are similar
+train_table <- table(stem.train$Switcher) / length(stem.train$Switcher)
+test_table <- table(stem.test$Switcher) / length(stem.test$Switcher)
+rbind(train_table, test_table)
+#tables have similar values. This means that our training and test datasets can are good.
+
+#3----
+#make boxplots for each Quantative Variable
+#it was easiest to change 1 and 0 to their correpsonding switcher, persister values to display
+#on the tables and graphs
+stem$Switcher[stem$Switcher == 1] <- "Switcher"
+stem$Switcher[stem$Switcher == 0] <- "Perisister"
+boxplot(Teacher ~ Switcher, data = stem, main = "Teacher For each Switcher", 
+        ylab = "Teacher Rating")
+boxplot(ClassPractice ~ Switcher, data = stem, main = "Class Practice For each Switcher",
+        ylab = "Class Practice Rating")
+boxplot(StandardizedTest ~ Switcher, data = stem, main = "Standardized Test For each Switcher",
+        ylab = "Standardized Test Score")
+
+#make a contingency table for the qualatative variable
+table1 <- prop.table(table(stem$Gender, stem$Switcher), margin = 1)
+table2 <- prop.table(table(stem$Major, stem$Switcher), margin = 1)
+table3 <- prop.table(table(stem$PrevCalc, stem$Switcher), margin = 1)
+rbind(table1, table2, table3)
+
+#replace switcher back to their origninal 1 and 0 values
+stem$Switcher[stem$Switcher == "Switcher"] <- 1
+stem$Switcher[stem$Switcher == "Perisister"] <- 0
+
+#Analysis----
+
+#4----
+#fit the model
+# Model: logistic(Switcher)
+# = beta0 + beta1 female + beta2 Egineering + beta3 Pre-med + beta4 non-STEM + beta5 undecided
+# + bet6 HS + beta7 college + beta8 Teacher + beta9 ClassPractice + beta10 StandardizedTest
+set.seed(18)
+stem.out <- glm(Switcher ~ Gender + Major + PrevCalc + Teacher +  ClassPractice + StandardizedTest,
+                data = stem.train,
+                family = binomial)
+
+summary(stem.out)
+
+#look at the 95% CI and coefficient values
+coef(stem.out)
+exp(coef(stem.out)[-1]) #compared to 0
+confint(stem.out)
+exp(confint(stem.out)[-1,]) #compard to 1
+
+#5----
+#interpreation for standardized Test
+#There is no statistical signifiance between standardized Test score (p-value = 0.162)
+# For a one unit increase in Standardized Test score, we expect a increase of -0.64% in the odds of
+#switching (95% CI: -1.51% to 0.27%), holding all else constant. 
+
+#6----
+#previous calc experience
+exp(confint(stem.out)[-1,]) #compard to 1
+#There is no statistically significant difference in the calc experience
+#come back to explain
+
+#Ho: There is no statistical difference in previous calc expereince
+stem.red <- glm(Switcher ~ Gender + Major + Teacher +  ClassPractice + StandardizedTest,
+                data = stem.train,
+                family = binomial)
+#test-statistic value: 0.52877
+anova(stem.red, stem.out, test = "Chisq")
+#p-value: 0.7677
+
+#7----
+#intended major
+#Ho: There is no statistical difference in previous intended major.
+stem.red <- glm(Switcher ~ Gender + PrevCalc + Teacher +  ClassPractice + StandardizedTest,
+                data = stem.train,
+                family = binomial)
+#test-statistic value: 181
+anova(stem.red, stem.out, test = "Chisq")
+#p-value: >0.001
+
+#8----
+#Look at men and women
+exp(coef(stem.out)[-1]) #compared to 0
+exp(confint(stem.out)[-1,]) #compard to 1
+
+#Going from men to women, there is a 34.9% increase (95% CI: 3.5% to 76.1%)
+#in the odds of switching, holding all else constant
+
+
+#9----
+#My analysis
+
+
+#10----
+#ROC
+library(ROCR)
+#train
+stem.pred <- prediction(predict(stem.out, type = "response"), stem.train$Switcher)
+stem.pref <- performance(stem.pred, measure = "tpr", x.measure ="fpr")
+
+#test
+stem.test.pred <- prediction(predict(stem.out, newdata = stem.test, type =  "response"),
+                               stem.test$Switcher)
+stem.test.perf <- performance(stem.test.pred, measure = "tpr", x.measure = "fpr")
+
+plot(stem.pref, xlab = "1-specificity", ylab = "sensitivity", main = "ROC curve")
+abline(0,1, col = "grey")
+plot(stem.test.perf, add = TRUE, col = "red")
+
+#11----
+#This shows our AUC and its predictions
+performance(stem.pred, measure = "auc")
+performance(stem.test.pred, measure = "auc")
