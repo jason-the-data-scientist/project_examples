@@ -1,0 +1,421 @@
+---
+title: "Linear Regression"
+output:
+  word_document: default
+  pdf_document: default
+---
+
+<br>
+
+Linear Regression
+
+<br>
+
+Key concepts: The linear regression model, least squares method, assessing the fit of a model, multiple linear regression, inference, categorical variables, modeling nonlinear relationships, model fitting, big data and regression.
+
+<br>
+
+```{r setup, include=FALSE} 
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+knitr::opts_knit$set(root.dir = "C:\\Users\\jason\\Documents\\Analytics TA (TAMU)\\4th Edition\\BA 4e Data Files\\Chapter 07\\")
+```
+
+
+***
+
+
+Data
+```{r}
+head(mtcars)
+```
+
+<br>
+
+***Simple Linear Regression***
+
+<br>
+
+Create a scatterplot of MPG as the dependent variable and weight as the independent variable.
+```{r}
+#Create scatterplot
+plot(mpg~wt, data=mtcars,
+     main = "Scatter Plot of MPG vs Weight", 
+     col ="blue", 
+     pch=19)
+
+# #ggplot
+# ggplot(data=mtcars) +
+#   geom_point(aes(x=wt, y=mpg), color = "blue") +
+#   labs(title = "Scatter Plot of MPG vs Weight")
+```
+
+<br>
+
+Use the data to develop an estimated regression equation. Use MPG as the dependent variable and weight as the independent variable.
+```{r}
+mtcars.out <- lm(mpg~wt, data=mtcars)
+```
+lm() is a linear model function. glm() is another function that does the same thing.
+
+The variable before the ~ is the response (independent) variable and everything after the ~ is the predictor (dependent) variable(s).
+
+<br>
+
+Look at the output
+```{r}
+print(mtcars.out)
+```
+This gives the formula and the coefficients
+
+<br>
+
+Look at the summary of it as well.
+```{r}
+summary(mtcars.out)
+```
+This gives more detailed information.
+
+The model is y_hat = 37.2851 - 5.3445*x, where x=weight
+
+<br>
+
+It is extremely important that you check the assumptions of your model before doing any inference. Though in this class the assumptions will almost always be met, in real life, they often are not. To do this, run the following code:
+```{r}
+#First check assumptions before doing inference.
+par(mfrow=c(2,2)) #This makes it so that you can see all 4 plots
+plot(mtcars.out)
+par(mfrow=c(1,1)) #This resets the format for future plots
+```
+A flat horizontal line for the Residuals vs Fitted Plots indicates independence.
+
+A a straight line for the Normal QQ Plot indicates normality.
+
+A flat horizontal line for the Scale-Location Plot indicates equal variance.
+
+No points over the red dotted lines indicates no influential points for the Residuals vs Leverage graph.
+
+<br>
+
+The summary has a lot of information that we can look at individually.
+
+<br>
+
+What are the estimates of the regression line?
+```{r}
+summary(mtcars.out)$coefficients
+```
+
+<br>
+
+How much variation is explained by x?
+```{r}
+summary(mtcars.out)$r.squared
+```
+
+<br>
+
+What is the regression formula?
+```{r}
+summary(mtcars.out)$call
+```
+
+<br>
+
+What is the standard deviation?
+```{r}
+summary(mtcars.out)$sigma
+```
+
+<br>
+
+Conduct a 95% confidence interval the estimates:
+```{r}
+confint(mtcars.out, level=0.95)
+```
+
+<br>
+
+Get the p-values of the estimates
+```{r}
+summary(mtcars.out)$coefficients[,4]
+```
+
+<br>
+
+What would you predict the mean mpg to be if the weight is 3.0? 
+```{r}
+predict(mtcars.out, newdata=data.frame(wt=3.0))
+```
+You can reuse this code by changing the linear model (mtcars.out), the variable (wt) and the variable value (3.0).
+
+<br>
+
+What would you predict the weight to be if the mpg is 25?
+```{r}
+approx(x = mtcars.out$fitted.values, y = mtcars$wt, xout = 25)$y
+```
+A warning message will be outputted in the console because it is an approximation.
+
+To reuse this code, change the linear model (mtcars.out), the y-variable (mtcars$wt), and the input amount (25).
+
+<br>
+<br>
+
+***
+
+***Multiple Linear Regression***
+
+<br>
+
+Use the data to develop an estimated regression equation. Use MPG as the dependent variable with weight and horsepower as the independent variable.
+```{r}
+mtcars.out2 <- lm(mpg~wt+hp, data=mtcars)
+```
+Use + to add more variables to the model
+
+<br>
+
+Look at the output
+```{r}
+print(mtcars.out2)
+```
+
+<br>
+
+Look at the summary of it as well. This has more information.
+```{r}
+summary(mtcars.out2)
+```
+The model is y_hat = 37.22727 - 3.87783x1 -0.03177*x2, where x1=weight and x2=horsepower
+
+<br>
+
+It is extremely important that you check the assumptions of your model before doing any inference. Though in this class the assumptions will almost always be met, in real life, they often are not. To do this, run the following code:
+```{r}
+#First check assumptions before doing inference.
+par(mfrow=c(2,2))
+plot(mtcars.out2)
+par(mfrow=c(1,1))
+```
+A flat horizontal line for the Residuals vs Fitted Plots indicates independence.
+
+A a straight line for the Normal QQ Plot indicates normality.
+
+A flat horizontal line for the Scale-Location Plot indicates equal variance.
+
+No points over the red dotted lines indicates no influential points for the Residuals vs Leverage graph.
+
+<br>
+
+What are the estimates of the regression line?
+```{r}
+summary(mtcars.out2)$coefficients
+```
+
+<br>
+
+How much variation is explained by x?
+```{r}
+summary(mtcars.out2)$r.squared
+```
+
+<br>
+
+Conduct a 95% confidence interval the estimates:
+```{r}
+confint(mtcars.out, level=0.95)
+```
+
+<br>
+
+Get the p-values of the estimates
+```{r}
+summary(mtcars.out2)$coefficients[,4]
+```
+
+<br>
+
+What would you predict the mean mpg to be if the weight is 3.5 and horsepower of 100? 
+```{r}
+predict(mtcars.out2, newdata=data.frame(wt=3.5, hp=100))
+```
+List the values and their variables in within the data.frame separated by commas.
+
+<br>
+
+Calculate the predicted price and residual for each automobile in the data
+```{r}
+predict(mtcars.out2)
+resid(mtcars.out2)
+```
+
+<br>
+
+Sort the data by residuals (smallest to largest)
+```{r}
+mtcars$predict <- predict(mtcars.out)
+mtcars$resid <- resid(mtcars.out)
+#Sort the data
+library(dplyr)
+mtcars %>% arrange(resid)
+```
+
+<br>
+<br>
+
+***
+
+***Model Selection***
+
+<br>
+
+Use the data to develop an estimated regression equation. Use MPG as the dependent variable and weight, horsepower, number of cylinders, displacement, rear axle ratio, 1/4 mile time, number of forward gears, and number of carburetors as the independent variables.
+```{r}
+mtcars.out3 <- lm(mpg~wt+hp+cyl+disp+drat+qsec+gear+carb, data=mtcars)
+```
+
+<br>
+
+Look at the summary coefficients and then determines which variables are not significant. Then rerun the linear model. Use alpha=0.1
+```{r}
+#Option 1
+summary(mtcars.out3)
+#Variables that have a Pr(>|t|) that are greater than 0.05 are not significant and those that have a Pr(>|t|) less than 0.1 are significant. You can look at the summary to find it
+#Fit the model to the significant variables
+mtcars.out4 <- lm(mpg~wt, data=mtcars)
+
+#Option 2
+#Using Code
+#This code can be used again with a few edits. This is more automatic. You are not expect to know this code at all. 
+toselect.x <- summary(mtcars.out3)$coeff[,4] < 0.05 #p-value is adjustable, change for data file
+# select significant variables
+relevant.x <- names(toselect.x)[toselect.x == TRUE] 
+# formula with only significant variables
+mod1 <- paste("mpg~",paste(relevant.x, collapse="+"),sep = "") #Change to adjust for y-variable "mpg"
+mtcars.out4 <- lm(mod1,data=mtcars) #adjust for data name
+```
+Since only weight (wt) is a significant variable in this example, we will only use this variable. This model happens to be the same one as the first one we looked at.
+
+<br>
+<br>
+
+***
+
+***Regression with Categorical Data***
+
+<br>
+
+Create a linear model to predict mpg from weight, engine shape, and transmission type. For the engine type (am), use 0 = V-shaped, 1 = straight. For the transmission type (vs), use 0 = automatic, 1 = manual.
+
+If the data are strings, convert them to 0 or 1:
+```{r}
+#mtcars$vs[mtcars$vs=="string1"] <- 0
+#mtcars$am[mtcars$am=="string2"] <- 1
+#mtcars$vs <- as.numeric(mtcars$vs)
+#mtcars$am <- as.numeric(mtcars$am)
+```
+To reuse this code change the data (mtcars) and variables (vs and am) to match what you are trying to do. Also, change string1 and string2 to match the strings in your dataset. Note that you can run a regression model without changing the values to 0 or 1, however, it could affect your model if you expect a variable to be a 1 and it R treats it like a 0. If there are more than 2 factors, include the variable without any of the above manipulations.
+
+<br>
+
+Model the data with a regression
+```{r}
+mtcars.out5 <- lm(mpg~wt+as.factor(vs)+am, data=mtcars)
+```
+Change vs to a factor so that it is treated as a qualitative variable and not a quantitative one.
+
+<br>
+
+First check assumptions before doing inference.
+```{r}
+par(mfrow=c(2,2))
+plot(mtcars.out5)
+par(mfrow=c(1,1))
+```
+
+<br>
+
+What are the estimates of the regression line?
+```{r}
+summary(mtcars.out5)
+```
+
+<br>
+
+What is a 95% CI of the parameters?
+```{r}
+confint(mtcars.out5, level=0.95)
+```
+
+<br>
+
+Using the first linear model mtcars.out <- lm(mpg~wt, data=mtcars), plot mpg as a function of weight using vs and am as different colors.
+```{r}
+#Create scatter plots that color based on transmission type (vs)
+plot(mpg~wt, data=mtcars,
+     main = "Scatter Plot of MPG by VS", 
+     col = as.factor(mtcars$vs), 
+     pch = 19)
+
+#Create scatter plots that color based on engine type (am)
+plot(mpg~wt, data=mtcars,
+     main = "Scatter Plot of MPG by AM", 
+     col = as.factor(mtcars$am), 
+     pch = 19)
+```
+
+<br>
+<br>
+
+***
+
+***Quadratic Regression***
+
+<br>
+
+Create a quadratic regression predicting mpg from weight and weight squared.
+
+<br>
+
+Create a new variable that is a value squared
+```{r}
+mtcars$wt_2 <- mtcars$wt^2
+```
+
+<br>
+
+Model the quadratic regression
+```{r}
+mtcars.out6 <- lm(mpg~wt+wt_2, data=mtcars)
+```
+
+<br>
+
+First check assumptions before doing inference.
+```{r}
+par(mfrow=c(2,2))
+plot(mtcars.out)
+par(mfrow=c(1,1))
+```
+
+<br>
+
+What are the estimates of the regression line?
+```{r}
+summary(mtcars.out5)
+```
+
+<br>
+
+What is a 95% CI of the parameters?
+```{r}
+confint(mtcars.out6, level=0.95)
+```
+
+<br>
+
+Check if the quadratic linear model is significantly different than a simple linear model. Use alpha=0.05
+```{r}
+anova(mtcars.out6,mtcars.out)
+```
+Since the p-value is less alpha, we conclude that the two models are statistically significant. If both models satisfy the assumptions of a linear model, then we are usually want the model with the larger R-squared, given that it fits the model well.
